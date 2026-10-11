@@ -1,6 +1,6 @@
 // Vercel Serverless Function: /api/tts
 // Voz natural de Gemini. Voces masculinas: Orus, Charon, Puck, Fenrir, Algenib
-const VOICE = process.env.GEMINI_VOICE || 'Orus';
+const VOICE = process.env.GEMINI_VOICE || 'Algenib';
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 
 export default async function handler(req, res) {
@@ -17,7 +17,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: 'Dilo como un hombre venezolano joven, cálido, natural y cercano, como en una llamada: ' + text.slice(0, 700) }] }],
+          contents: [{ parts: [{ text: 'Dilo como un hombre adulto y maduro de unos 45 años, con voz grave, gruesa y pausada, cálido y cercano, como en una llamada: ' + text.slice(0, 700) }] }],
           generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
