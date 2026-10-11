@@ -4,8 +4,10 @@ import { GoogleGenAI } from '@google/genai';
 import { SYSTEM } from './chat.js';
 
 const MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
-const VOICE = process.env.GEMINI_VOICE || 'Orus';
+const VOICE = process.env.GEMINI_VOICE || 'Algenib';
 const EXTRA = `
+
+TU VOZ: eres un hombre adulto y maduro. Habla con voz grave, gruesa, pausada y tranquila, con autoridad amable, como un señor de unos 45 años. Nunca suenes joven, agudo ni acelerado.
 
 MODO LLAMADA EN VIVO: hablas por voz con Reymon. Responde corto, natural y conversacional, como una llamada (1 a 3 frases). Si Reymon te muestra una captura, dile qué entendiste y propón el mensaje de WhatsApp dictándolo de forma natural. No uses marcas ni símbolos.`;
 
