@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tyrone · Asistente de ventas</title>
+<style>
+:root{--bg:#0f1720;--card:#18232f;--me:#1f6feb;--ai:#223140;--tx:#e8eef4;--mut:#8aa0b4;--ok:#25d366;--red:#e5484d}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+#app{display:flex;flex-direction:column;height:100%;padding-top:env(safe-area-inset-top,0)}
+header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card)}
+header b{flex:1}
+header button{background:none;border:0;color:var(--mut);font-size:13px}
+#log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:88%;padding:10px 12px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word;line-height:1.4;font-size:15px}
+.me{align-self:flex-end;background:var(--me)}
+.ai{align-self:flex-start;background:var(--ai)}
+.m img{max-width:100%;border-radius:8px;display:block;margin-bottom:6px}
+.tag{font-size:12px;color:var(--mut);margin-bottom:4px}
+.wa{background:#0b3d2e;border:1px solid var(--ok);border-radius:10px;padding:8px;margin:8px 0}
+.wa button,.say{background:var(--ok);color:#06210f;border:0;border-radius:8px;padding:6px 10px;font-weight:600;margin-top:6px;margin-right:6px}
+.say{background:#33475b;color:var(--tx)}
+#prev{display:flex;gap:6px;padding:0 12px;overflow-x:auto}
+#prev span{background:var(--card);padding:4px 8px;border-radius:8px;font-size:12px;white-space:nowrap}
+#bar{display:flex;gap:8px;align-items:flex-end;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0));background:var(--card)}
+#bar textarea{flex:1;background:var(--bg);color:var(--tx);border:1px solid #2c3d4d;border-radius:12px;padding:10px;font:inherit;resize:none;max-height:120px}
+.ib{width:42px;height:42px;border-radius:50%;border:0;background:#2c3d4d;color:var(--tx);font-size:18px;flex:none}
+#send{background:var(--me)}
+#mic.on{background:var(--red)}
+#call{background:var(--ok);color:#06210f}
+#call.on{background:var(--red);color:#fff}
+#login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:9}
+#login input{padding:12px;border-radius:10px;border:1px solid #2c3d4d;background:var(--card);color:var(--tx);width:260px}
+#login button{padding:12px 20px;border:0;border-radius:10px;background:var(--me);color:#fff}
+#status{text-align:center;font-size:12px;color:var(--mut);padding:2px}
+</style>
+</head>
+<body>
+<div id="login">
+  <h2>Tyrone 🤝</h2>
+  <input id="pw" type="password" placeholder="Clave de acceso">
+  <button id="enter">Entrar</button>
+</div>
+<div id="app">
+  <header><b>Tyrone · Ventas Docenty PRO</b><button id="clear">Nueva</button></header>
+  <div id="log"></div>
+  <div id="status"></div>
+  <div id="prev"></div>
+  <div id="bar">
+    <button class="ib" id="attach" title="Adjuntar">📎</button>
+    <textarea id="txt" rows="1" placeholder="Escribe, pega una captura o habla…"></textarea>
+    <button class="ib" id="mic" title="Dictar">🎤</button>
+    <button class="ib" id="call" title="Modo llamada">📞</button>
+    <button class="ib" id="send">➤</button>
+  </div>
+  <input id="file" type="file" multiple accept="image/*,video/*,application/pdf,.txt,.md,.csv" hidden>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let pw=localStorage.getItem('tyr_pw')||'', msgs=[], pending=[], calling=false, rec=null, busy=false;
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+
+// ---------- acceso ----------
+if(pw)$('login').style.display='none';
+$('enter').onclick=()=>{pw=$('pw').value.trim();if(!pw)return;localStorage.setItem('tyr_pw',pw);$('login').style.display='none'};
+
+// ---------- utilidades ----------
+function toB64(blob){return new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]);f.readAsDataURL(blob)})}
+function shrink(src,max=1280){return new Promise(res=>{
+  const img=new Image();img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));
+  const c=document.createElement('canvas');c.width=img.width*k;c.height=img.height*k;
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);res(c.toDataURL('image/jpeg',.8))};img.src=src})}
+async function imgBlock(blob){const url=await shrink(URL.createObjectURL(blob));
+  return {preview:url,block:{type:'image',source:{type:'base64',media_type:'image/jpeg',data:url.split(',')[1]}}}}
+async function videoFrames(file,n=6){
+  const v=document.createElement('video');v.muted=true;v.src=URL.createObjectURL(file);
+  await new Promise(r=>v.onloadedmetadata=r);const out=[];
+  for(let i=0;i<n;i++){v.currentTime=Math.min(v.duration-.1,(v.duration/n)*i+.1);
+    await new Promise(r=>v.onseeked=r);
+    const c=document.createElement('canvas');const k=Math.min(1,960/Math.max(v.videoWidth,v.videoHeight));
+    c.width=v.videoWidth*k;c.height=v.videoHeight*k;c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+    out.push(c.toDataURL('image/jpeg',.7))}
+  return out}
+
+// ---------- adjuntos ----------
+async function addFiles(files){
+  for(const f of files){
+    $('status').textContent='Procesando '+f.name+'…';
+    if(f.type.startsWith('image/')){pending.push({name:f.name,...await imgBlock(f)})}
+    else if(f.type.startsWith('video/')){
+      const fr=await videoFrames(f);
+      pending.push({name:f.name+' (6 fotogramas)',preview:fr[0],blocks:[{type:'text',text:`[Video "${f.name}": estos son 6 fotogramas en orden. No tiene audio disponible.]`},...fr.map(u=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:u.split(',')[1]}}))]})}
+    else if(f.type==='application/pdf'){
+      if(f.size>3e6){alert('PDF muy grande (máx. ~3 MB)');continue}
+      pending.push({name:f.name,block:{type:'document',source:{type:'base64',media_type:'application/pdf',data:await toB64(f)}}})}
+    else{pending.push({name:f.name,block:{type:'text',text:`[Archivo ${f.name}]\n`+(await f.text()).slice(0,20000)}})}
+  }
+  $('status').textContent='';renderPrev()}
+function renderPrev(){$('prev').innerHTML=pending.map((p,i)=>`<span>${p.name} <a href="#" data-i="${i}" style="color:#e5484d">✕</a></span>`).join('');
+  $('prev').querySelectorAll('a').forEach(a=>a.onclick=e=>{e.preventDefault();pending.splice(+a.dataset.i,1);renderPrev()})}
+$('attach').onclick=()=>$('file').click();
+$('file').onchange=e=>{addFiles([...e.target.files]);e.target.value=''};
+$('txt').addEventListener('paste',e=>{const fs=[...e.clipboardData.files];if(fs.length){e.preventDefault();addFiles(fs)}});
+
+// ---------- UI del chat ----------
+function bubble(role,text,previews=[]){
+  const d=document.createElement('div');d.className='m '+(role==='user'?'me':'ai');
+  previews.forEach(u=>{const i=document.createElement('img');i.src=u;d.appendChild(i)});
+  if(role==='user'){d.appendChild(document.createTextNode(text))}
+  else{
+    const parts=text.split(/<<<MENSAJE([\s\S]*?)>>>/);
+    parts.forEach((p,i)=>{
+      if(i%2===0){if(p.trim())d.appendChild(document.createTextNode(p.trim()+'\n'))}
+      else{const w=document.createElement('div');w.className='wa';w.textContent=p.trim();
+        const b=document.createElement('button');b.textContent='Copiar para WhatsApp';
+        b.onclick=()=>{navigator.clipboard.writeText(p.trim());b.textContent='¡Copiado!'};
+        const s=document.createElement('button');s.textContent='Abrir WhatsApp';
+        s.onclick=()=>window.open('https://wa.me/?text='+encodeURIComponent(p.trim()));
+        w.append(document.createElement('br'),b,s);d.appendChild(w)}})}
+  $('log').appendChild(d);$('log').scrollTop=1e9;return d}
+
+// ---------- envío ----------
+function stripOld(){ // solo la última tanda de adjuntos viaja completa (ahorra tamaño)
+  return msgs.map((m,i)=>i===msgs.length-1?m:{role:m.role,content:m.content.map(b=>b.type==='text'?b:{type:'text',text:'[adjunto enviado antes]'})})}
+async function send(textOverride){
+  if(lws&&lws.readyState===1)return sendLive(textOverride);
+  if(busy)return;
+  const text=(textOverride??$('txt').value).trim();
+  if(!text&&!pending.length)return;
+  const content=[];const prev=[];
+  pending.forEach(p=>{if(p.blocks)content.push(...p.blocks);else content.push(p.block);if(p.preview)prev.push(p.preview)});
+  content.push({type:'text',text:text||'Analiza esto y dime cómo respondo / cierro la venta.'});
+  msgs.push({role:'user',content});bubble('user',text||'(adjuntos)',prev);
+  pending=[];renderPrev();$('txt').value='';busy=true;$('status').textContent='Tyrone está pensando…';
+  try{
+    const r=await fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:pw,messages:stripOld().slice(-16)})});
+    const j=await r.json();
+    if(r.status===401){localStorage.removeItem('tyr_pw');$('login').style.display='flex';throw new Error('Clave incorrecta')}
+    if(!r.ok)throw new Error(j.error);
+    msgs.push({role:'assistant',content:[{type:'text',text:j.text}]});
+    bubble('assistant',j.text);
+    if(calling)speak(j.text);
+  }catch(e){msgs.pop();bubble('assistant','⚠️ '+e.message);if(calling)listen()}
+  busy=false;$('status').textContent=''}
+$('send').onclick=()=>send();
+$('txt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!/Mobi|Android/i.test(navigator.userAgent)){e.preventDefault();send()}});
+$('clear').onclick=()=>{msgs=[];pending=[];renderPrev();$('log').innerHTML=''};
+
+// ---------- voz ----------
+function listen(){
+  if(!SR){alert('Tu navegador no soporta voz. Usa Chrome o Safari actualizado.');return}
+  if(rec)try{rec.abort()}catch{}
+  rec=new SR();rec.lang='es-VE';rec.interimResults=true;rec.continuous=false;
+  let final='';
+  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;final=t;$('txt').value=t};
+  rec.onend=()=>{$('mic').classList.remove('on');
+    if(final.trim()){if(calling||true)send(final)}
+    else if(calling&&!busy&&!speechSynthesis.speaking)setTimeout(listen,300)};
+  rec.start();$('mic').classList.add('on');$('status').textContent='Escuchando…'}
+function speak(full){
+  const clean=full.replace(/<<<MENSAJE[\s\S]*?>>>/g,' (te dejé el mensaje listo en pantalla). ').replace(/[*_#`]/g,'').replace(/Tyrone/gi,'Tairón');
+  stopAudio();$('status').textContent='Tyrone está hablando…';
+  fetch('/api/tts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:pw,text:clean})})
+    .then(r=>r.ok?r.json():Promise.reject())
+    .then(j=>{
+      const pcm=Uint8Array.from(atob(j.audio),c=>c.charCodeAt(0));
+      const h=new DataView(new ArrayBuffer(44));const w=(o,s)=>[...s].forEach((c,i)=>h.setUint8(o+i,c.charCodeAt(0)));
+      w(0,'RIFF');h.setUint32(4,36+pcm.length,true);w(8,'WAVEfmt ');h.setUint32(16,16,true);h.setUint16(20,1,true);h.setUint16(22,1,true);
+      h.setUint32(24,24000,true);h.setUint32(28,48000,true);h.setUint16(32,2,true);h.setUint16(34,16,true);w(36,'data');h.setUint32(40,pcm.length,true);
+      curAudio=new Audio(URL.createObjectURL(new Blob([h.buffer,pcm],{type:'audio/wav'})));
+      curAudio.onended=()=>{$('status').textContent='';if(calling)listen()};
+      curAudio.play().catch(()=>{if(calling)listen()});
+    })
+    .catch(()=>{ // respaldo: voz del navegador
+      const u=new SpeechSynthesisUtterance(clean);u.lang='es-VE';
+      const vs=speechSynthesis.getVoices().filter(v=>v.lang.startsWith('es'));
+      const v=vs.find(v=>/jorge|diego|pablo|juan|carlos|male|hombre/i.test(v.name))||vs[0];if(v)u.voice=v;
+      u.onend=()=>{$('status').textContent='';if(calling)listen()};
+      speechSynthesis.speak(u)})}
+let curAudio=null;
+function stopAudio(){speechSynthesis.cancel();if(curAudio){curAudio.pause();curAudio=null}}
+$('mic').onclick=()=>{if($('mic').classList.contains('on')){rec&&rec.stop()}else listen()};
+function legacyCall(){
+  calling=!calling;$('call').classList.toggle('on',calling);$('call').textContent=calling?'⏹':'📞';
+  if(calling)listen();else{stopAudio();try{rec&&rec.abort()}catch{}$('status').textContent=''}}
+speechSynthesis.getVoices();
+
+// ---------- LLAMADA EN VIVO (Gemini Live) ----------
+let lws=null,lctx=null,lstream=null,lproc=null,lnext=0,lsrcs=[],uB=null,aB=null;
+function b64(buf){let s='';const u=new Uint8Array(buf);for(let i=0;i<u.length;i+=0x8000)s+=String.fromCharCode.apply(null,u.subarray(i,i+0x8000));return btoa(s)}
+function liveUI(on){$('call').classList.toggle('on',on);$('call').textContent=on?'⏹':'📞'}
+async function startLive(){
+  $('status').textContent='Conectando llamada…';
+  const r=await fetch('/api/live-token',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:pw})});
+  const j=await r.json();if(!r.ok)throw new Error(j.error||'token');
+  lstream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
+  lctx=new AudioContext({sampleRate:16000});
+  await new Promise((ok,ko)=>{
+    lws=new WebSocket(j.url+'?access_token='+encodeURIComponent(j.token));
+    lws.onopen=()=>lws.send(JSON.stringify({setup:j.setup}));
+    lws.onerror=()=>ko(new Error('No se pudo conectar'));
+    lws.onclose=()=>{ko(new Error('Conexión cerrada'));stopLive()};
+    lws.onmessage=async e=>{const m=JSON.parse(e.data instanceof Blob?await e.data.text():e.data);
+      if(m.setupComplete)ok();onLive(m)};
+  });
+  const src=lctx.createMediaStreamSource(lstream);
+  lproc=lctx.createScriptProcessor(4096,1,1);
+  lproc.onaudioprocess=e=>{if(!lws||lws.readyState!==1)return;
+    const f=e.inputBuffer.getChannelData(0),p=new Int16Array(f.length);
+    for(let i=0;i<f.length;i++)p[i]=Math.max(-1,Math.min(1,f[i]))*0x7fff;
+    lws.send(JSON.stringify({realtimeInput:{audio:{data:b64(p.buffer),mimeType:'audio/pcm;rate=16000'}}}))};
+  src.connect(lproc);lproc.connect(lctx.destination);
+  liveUI(true);$('status').textContent='En llamada con Tyrone — habla cuando quieras (mejor con audífonos)'}
+function stopLive(){
+  const w=lws;lws=null;try{w&&w.close()}catch{}
+  lsrcs.forEach(x=>{try{x.stop()}catch{}});lsrcs=[];lnext=0;
+  try{lproc&&lproc.disconnect()}catch{}lproc=null;
+  lstream&&lstream.getTracks().forEach(t=>t.stop());lstream=null;
+  try{lctx&&lctx.close()}catch{}lctx=null;uB=aB=null;
+  liveUI(false);$('status').textContent=''}
+function onLive(m){
+  const s=m.serverContent;if(!s)return;
+  if(s.interrupted){lsrcs.forEach(x=>{try{x.stop()}catch{}});lsrcs=[];lnext=0}
+  for(const p of (s.modelTurn?.parts||[]))if(p.inlineData?.data)playLive(p.inlineData.data);
+  if(s.inputTranscription?.text){aB=null;uB=uB||bubble('user','');uB.append(s.inputTranscription.text)}
+  if(s.outputTranscription?.text){uB=null;aB=aB||bubble('assistant','');aB.append(s.outputTranscription.text);$('log').scrollTop=1e9}
+  if(s.turnComplete){uB=aB=null}}
+function playLive(data){
+  if(!lctx)return;
+  const bin=atob(data),n=bin.length>>1,buf=lctx.createBuffer(1,n,24000),ch=buf.getChannelData(0);
+  for(let i=0;i<n;i++){let v=bin.charCodeAt(2*i)|(bin.charCodeAt(2*i+1)<<8);if(v>=32768)v-=65536;ch[i]=v/32768}
+  const s=lctx.createBufferSource();s.buffer=buf;s.connect(lctx.destination);
+  lnext=Math.max(lnext,lctx.currentTime);s.start(lnext);lnext+=buf.duration;
+  lsrcs.push(s);s.onended=()=>{lsrcs=lsrcs.filter(x=>x!==s)}}
+function sendLive(textOverride){
+  const text=(textOverride??$('txt').value).trim();const prev=[];let extra='';
+  for(const p of pending){
+    const bl=p.blocks||[p.block];
+    for(const b of bl){
+      if(b.type==='image')lws.send(JSON.stringify({realtimeInput:{video:{data:b.source.data,mimeType:b.source.media_type}}}));
+      else if(b.type==='text')extra+=b.text+'\n';
+      else extra+='[Un documento PDF no se puede enviar durante la llamada; pégalo en el chat sin llamada]\n'}
+    if(p.preview)prev.push(p.preview)}
+  if(!text&&!pending.length)return;
+  bubble('user',text||'(adjuntos)',prev);
+  lws.send(JSON.stringify({realtimeInput:{text:(extra+(text||'Mira esto que te envié.')).trim()}}));
+  pending=[];renderPrev();$('txt').value=''}
+$('call').onclick=async()=>{
+  if(lws){stopLive();return}
+  if(calling){legacyCall();return}
+  try{await startLive()}
+  catch(e){stopLive();$('status').textContent='Llamada en vivo no disponible ('+e.message+'). Usando modo básico.';legacyCall()}};
+</script>
+</body>
+</html>
